@@ -146,6 +146,8 @@ impl Primary {
             synchronizer,
             signature_service.clone(),
             consensus_round.clone(),
+            parameters.unstable_ddos,
+            parameters.unstable_delay,
             parameters.min_block_delay,
             parameters.gc_depth,
             /* rx_primaries */ rx_primary_messages,

@@ -11,8 +11,8 @@ use crypto::Hash as _;
 use crypto::{Digest, PublicKey, SignatureService};
 use log::{debug, error, warn};
 use network::{CancelHandler, ReliableSender};
-use tokio::time::sleep;
-use std::collections::{HashMap, HashSet};
+use tokio::time::{sleep, Instant};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,6 +22,12 @@ use tokio::sync::mpsc::{Receiver, Sender};
 #[cfg(test)]
 #[path = "tests/core_tests.rs"]
 pub mod core_tests;
+
+// 添加延迟结构体
+struct DelayHeader {
+    header: Header,
+    process_at: Instant,
+}
 
 pub struct Core {
     /// The public key of this primary.
@@ -37,6 +43,8 @@ pub struct Core {
     /// The current consensus round (used for cleanup).
     consensus_round: Arc<AtomicU64>,
     /// The depth of the garbage collector.
+    unstable_ddos: bool,
+    unstable_delay: u64,
     min_block_delay: u64,
     gc_depth: Round,
 
@@ -80,6 +88,8 @@ impl Core {
         synchronizer: Synchronizer,
         signature_service: SignatureService,
         consensus_round: Arc<AtomicU64>,
+        unstable_ddos: bool,
+        unstable_delay: u64,
         min_block_delay: u64,
         gc_depth: Round,
         rx_primaries: Receiver<PrimaryMessage>,
@@ -97,6 +107,8 @@ impl Core {
                 synchronizer,
                 signature_service,
                 consensus_round,
+                unstable_ddos,
+                unstable_delay,
                 min_block_delay,
                 gc_depth,
                 rx_primaries,
@@ -353,19 +365,35 @@ impl Core {
         certificate.verify(&self.committee).map_err(DagError::from)
     }
 
+    fn elect_node(&self, round: Round) -> PublicKey {
+        // Elect the leader.
+        let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
+        keys.sort();
+        keys[round as usize % self.committee.size()].clone()
+    }
+
     // Main loop listening to incoming messages.
     pub async fn run(&mut self) {
+        let mut delayed_headers = VecDeque::new();
         loop {
             let result = tokio::select! {
                 // We receive here messages from other primaries.
                 Some(message) = self.rx_primaries.recv() => {
                     match message {
                         PrimaryMessage::Header(header) => {
-                            match self.sanitize_header(&header) {
-                                Ok(()) => self.process_header(&header).await,
-                                error => error
+                            if self.unstable_ddos && self.elect_node(1) != header.author {
+                                let delayed_header = DelayHeader {
+                                    header,
+                                    process_at: Instant::now() + Duration::from_millis(self.unstable_delay),
+                                };           
+                                delayed_headers.push_back(delayed_header);
+                                Ok(())               
+                            } else {
+                                match self.sanitize_header(&header) {
+                                    Ok(()) => self.process_header(&header).await,
+                                    error => error
+                                }
                             }
-
                         },
                         PrimaryMessage::Vote(vote) => {
                             match self.sanitize_vote(&vote) {
@@ -394,6 +422,10 @@ impl Core {
 
                 // We also receive here our new headers created by the `Proposer`.
                 Some(header) = self.rx_proposer.recv() => self.process_own_header(header).await,
+
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                    self.process_delayed_headers(&mut delayed_headers).await
+                }
             };
             match result {
                 Ok(()) => (),
@@ -417,4 +449,33 @@ impl Core {
             }
         }
     }
+
+    // Add this helper method to your struct implementation
+    async fn process_delayed_headers(&mut self, delayed_headers: &mut VecDeque<DelayHeader>) -> Result<(), DagError> {
+        let now = Instant::now();
+        let mut results = Vec::new();
+        
+        // Process all headers that are ready
+        while let Some(delayed_header) = delayed_headers.front() {
+            if delayed_header.process_at <= now {
+                let delayed_header = delayed_headers.pop_front().unwrap();
+                let result = match self.sanitize_header(&delayed_header.header) {
+                    Ok(()) => self.process_header(&delayed_header.header).await,
+                    error => error
+                };
+                results.push(result);
+            } else {
+                break; // Headers are ordered by time, so we can stop here
+            }
+        }
+        
+        // Return the first error if any, otherwise Ok
+        for result in results {
+            result?;
+        }
+        
+        Ok(())
+    }
 }
+
+

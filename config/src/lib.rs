@@ -81,6 +81,8 @@ pub struct Parameters {
     pub max_batch_delay: u64,
     pub min_block_delay: u64,
     pub min_payload_delay: u64,
+    pub unstable_ddos: bool,
+    pub unstable_delay: u64,
 }
 
 impl Default for Parameters {
@@ -95,6 +97,8 @@ impl Default for Parameters {
             max_batch_delay: 100,
             min_block_delay: 100,
             min_payload_delay: 100,
+            unstable_ddos: false,
+            unstable_delay: 500,
         }
     }
 }

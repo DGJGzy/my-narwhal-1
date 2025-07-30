@@ -29,7 +29,9 @@ def local(ctx, debug=True):
         'batch_size': 500_000,  # bytes
         'max_batch_delay': 200,  # ms
         'min_block_delay': 100,
-        'min_payload_delay': 25
+        'min_payload_delay': 25,
+        'unstable_ddos': True,
+        'unstable_delay': 500,
     }
     try:
         ret = LocalBench(bench_params, node_params).run(debug)
@@ -100,7 +102,7 @@ def remote(ctx, debug=False):
         'nodes': [7],
         'workers': 1,
         'collocate': True,
-        'rate': [280000, 340000],
+        'rate': [180000, 220000, 280000],
         'tx_size': 256,
         'duration': 100,
         'runs': 1,
@@ -114,7 +116,9 @@ def remote(ctx, debug=False):
         'batch_size': 256_000,  # bytes
         'max_batch_delay': 200, # ms
         'min_block_delay': 100,
-        'min_payload_delay': 100
+        'min_payload_delay': 25,
+        'unstable_ddos': False,
+        'unstable_delay': 500,
     }
     try:
         Bench(ctx).run(bench_params, node_params, debug)
