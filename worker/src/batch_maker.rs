@@ -29,6 +29,7 @@ pub struct BatchMaker {
     batch_size: usize,
     /// The maximum delay after which to seal the batch (in ms).
     max_batch_delay: u64,
+    min_payload_delay: u64,
     /// Channel to receive transactions from the network.
     rx_transaction: Receiver<Transaction>,
     /// Output channel to deliver sealed batches to the `QuorumWaiter`.
@@ -47,6 +48,7 @@ impl BatchMaker {
     pub fn spawn(
         batch_size: usize,
         max_batch_delay: u64,
+        min_payload_delay: u64,
         rx_transaction: Receiver<Transaction>,
         tx_message: Sender<QuorumWaiterMessage>,
         workers_addresses: Vec<(PublicKey, SocketAddr)>,
@@ -55,6 +57,7 @@ impl BatchMaker {
             Self {
                 batch_size,
                 max_batch_delay,
+                min_payload_delay,
                 rx_transaction,
                 tx_message,
                 workers_addresses,
@@ -153,5 +156,6 @@ impl BatchMaker {
             })
             .await
             .expect("Failed to deliver batch");
+        sleep(Duration::from_millis(self.min_payload_delay)).await;
     }
 }

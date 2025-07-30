@@ -158,6 +158,7 @@ impl Worker {
         BatchMaker::spawn(
             self.parameters.batch_size,
             self.parameters.max_batch_delay,
+            self.parameters.min_payload_delay,
             /* rx_transaction */ rx_batch_maker,
             /* tx_message */ tx_quorum_waiter,
             /* workers_addresses */

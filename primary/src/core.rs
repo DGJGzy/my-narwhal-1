@@ -11,9 +11,11 @@ use crypto::Hash as _;
 use crypto::{Digest, PublicKey, SignatureService};
 use log::{debug, error, warn};
 use network::{CancelHandler, ReliableSender};
+use tokio::time::sleep;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use store::Store;
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -35,6 +37,7 @@ pub struct Core {
     /// The current consensus round (used for cleanup).
     consensus_round: Arc<AtomicU64>,
     /// The depth of the garbage collector.
+    min_block_delay: u64,
     gc_depth: Round,
 
     /// Receiver for dag messages (headers, votes, certificates).
@@ -77,6 +80,7 @@ impl Core {
         synchronizer: Synchronizer,
         signature_service: SignatureService,
         consensus_round: Arc<AtomicU64>,
+        min_block_delay: u64,
         gc_depth: Round,
         rx_primaries: Receiver<PrimaryMessage>,
         rx_header_waiter: Receiver<Header>,
@@ -93,6 +97,7 @@ impl Core {
                 synchronizer,
                 signature_service,
                 consensus_round,
+                min_block_delay,
                 gc_depth,
                 rx_primaries,
                 rx_header_waiter,
@@ -135,7 +140,10 @@ impl Core {
             .extend(handlers);
 
         // Process the header.
-        self.process_header(&header).await
+        self.process_header(&header).await?;
+        // Wait for the minimum block delay.
+        sleep(Duration::from_millis(self.min_block_delay)).await;
+        Ok(())
     }
 
     #[async_recursion]

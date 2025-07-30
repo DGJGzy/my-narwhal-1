@@ -146,6 +146,7 @@ impl Primary {
             synchronizer,
             signature_service.clone(),
             consensus_round.clone(),
+            parameters.min_block_delay,
             parameters.gc_depth,
             /* rx_primaries */ rx_primary_messages,
             /* rx_header_waiter */ rx_headers_loopback,
