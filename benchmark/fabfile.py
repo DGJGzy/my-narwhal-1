@@ -117,7 +117,7 @@ def remote(ctx, debug=False):
         'max_batch_delay': 200, # ms
         'min_block_delay': 100,
         'min_payload_delay': 25,
-        'unstable_ddos': False,
+        'unstable_ddos': True,
         'unstable_delay': 500,
     }
     try:

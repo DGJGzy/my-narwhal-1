@@ -422,10 +422,6 @@ impl Core {
 
                 // We also receive here our new headers created by the `Proposer`.
                 Some(header) = self.rx_proposer.recv() => self.process_own_header(header).await,
-
-                _ = tokio::time::sleep(Duration::from_millis(100)) => {
-                    self.process_delayed_headers(&mut delayed_headers).await
-                }
             };
             match result {
                 Ok(()) => (),
@@ -436,6 +432,8 @@ impl Core {
                 Err(e @ DagError::TooOld(..)) => debug!("{}", e),
                 Err(e) => warn!("{}", e),
             }
+
+            let _ = self.process_delayed_headers(&mut delayed_headers).await;
 
             // Cleanup internal state.
             let round = self.consensus_round.load(Ordering::Relaxed);
