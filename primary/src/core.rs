@@ -422,6 +422,7 @@ impl Core {
 
                 // We also receive here our new headers created by the `Proposer`.
                 Some(header) = self.rx_proposer.recv() => self.process_own_header(header).await,
+                _ = tokio::time::sleep(Duration::from_millis(10)) => Ok(()),
             };
             match result {
                 Ok(()) => (),
@@ -455,6 +456,8 @@ impl Core {
         
         // Process all headers that are ready
         while let Some(delayed_header) = delayed_headers.front() {
+            debug!("header: {}, process: {:?}", delayed_header.header, delayed_header.process_at);
+            debug!("now: {:?}", now);
             if delayed_header.process_at <= now {
                 let delayed_header = delayed_headers.pop_front().unwrap();
                 let result = match self.sanitize_header(&delayed_header.header) {
