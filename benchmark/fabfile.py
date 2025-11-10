@@ -95,14 +95,14 @@ def install(ctx):
 
 
 @task
-def remote(ctx, debug=True):
+def remote(ctx, debug=False):
     ''' Run benchmarks on AWS '''
     bench_params = {
         'faults': 0,
         'nodes': [7],
         'workers': 1,
         'collocate': True,
-        'rate': [100000, 140000, 180000, 60000, 100000, 140000, 180000, 220000, 280000, 60000, 100000, 140000, 180000, 220000, 280000],
+        'rate': [60000, 100000, 140000, 180000, 220000, 280000],
         'tx_size': 256,
         'duration': 100,
         'runs': 1,
@@ -118,7 +118,7 @@ def remote(ctx, debug=True):
         'min_block_delay': 100,
         'min_payload_delay': 25,
         'unstable_ddos': True,
-        'unstable_delay': 500,
+        'unstable_delay': 0,
     }
     try:
         Bench(ctx).run(bench_params, node_params, debug)

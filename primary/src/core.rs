@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use store::Store;
 use tokio::sync::mpsc::{Receiver, Sender};
+use rand::Rng;
 
 #[cfg(test)]
 #[path = "tests/core_tests.rs"]
@@ -381,13 +382,21 @@ impl Core {
                 Some(message) = self.rx_primaries.recv() => {
                     match message {
                         PrimaryMessage::Header(header) => {
-                            if self.unstable_ddos && self.elect_node(1) != header.author {
+                            if self.unstable_ddos && self.unstable_delay > 0 && self.elect_node(1) != header.author {
                                 let delayed_header = DelayHeader {
                                     header,
                                     process_at: Instant::now() + Duration::from_millis(self.unstable_delay),
                                 };           
                                 delayed_headers.push_back(delayed_header);
                                 Ok(())               
+                            } else if self.unstable_ddos && self.unstable_delay == 0 {
+                                let delay_ms = 500 + rand::thread_rng().gen::<u64>() % 500;
+                                let delayed_header = DelayHeader {
+                                    header,
+                                    process_at: Instant::now() + Duration::from_millis(delay_ms),
+                                };           
+                                delayed_headers.push_back(delayed_header);
+                                Ok(())
                             } else {
                                 match self.sanitize_header(&header) {
                                     Ok(()) => self.process_header(&header).await,
