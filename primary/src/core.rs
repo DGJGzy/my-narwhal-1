@@ -13,20 +13,27 @@ use log::{debug, error, warn};
 use network::{CancelHandler, ReliableSender};
 use tokio::time::{sleep, Instant};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use store::Store;
 use tokio::sync::mpsc::{Receiver, Sender};
-use rand::Rng;
 
 #[cfg(test)]
 #[path = "tests/core_tests.rs"]
 pub mod core_tests;
 
+static START_TIME: OnceLock<Instant> = OnceLock::new();
+
 // 添加延迟结构体
 struct DelayHeader {
     header: Header,
+    process_at: Instant,
+}
+
+struct DelayVote {
+    vote: Vote,
     process_at: Instant,
 }
 
@@ -366,37 +373,46 @@ impl Core {
         certificate.verify(&self.committee).map_err(DagError::from)
     }
 
-    fn elect_node(&self, round: Round) -> PublicKey {
-        // Elect the leader.
+    pub fn get_idx(&self, key: &PublicKey) -> u64 {
         let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
         keys.sort();
-        keys[round as usize % self.committee.size()].clone()
+        keys.iter().position(|k| k == key).unwrap() as u64
     }
 
     // Main loop listening to incoming messages.
     pub async fn run(&mut self) {
-        let mut delayed_headers = VecDeque::new();
+        START_TIME.set(Instant::now()).unwrap_or(());
+
+        let mut delayed_headers: VecDeque<DelayHeader> = VecDeque::new();
+        let mut delayed_votes: VecDeque<DelayVote> = VecDeque::new();
+
         loop {
             let result = tokio::select! {
                 // We receive here messages from other primaries.
                 Some(message) = self.rx_primaries.recv() => {
                     match message {
                         PrimaryMessage::Header(header) => {
-                            if self.unstable_ddos && self.unstable_delay > 0 && self.elect_node(1) != header.author {
-                                let delayed_header = DelayHeader {
-                                    header,
-                                    process_at: Instant::now() + Duration::from_millis(self.unstable_delay),
-                                };           
-                                delayed_headers.push_back(delayed_header);
-                                Ok(())               
-                            } else if self.unstable_ddos && self.unstable_delay == 0 {
-                                let delay_ms = 500 + rand::thread_rng().gen::<u64>() % 500;
-                                let delayed_header = DelayHeader {
-                                    header,
-                                    process_at: Instant::now() + Duration::from_millis(delay_ms),
-                                };           
-                                delayed_headers.push_back(delayed_header);
-                                Ok(())
+                            if let Some(start_time) = START_TIME.get() {
+                                let elapsed = start_time.elapsed().as_secs();
+                                let cycle_position = elapsed % 90;
+                                let from_id = self.get_idx(&header.author);
+                                let my_id = self.get_idx(&self.name);
+                                if cycle_position >= 60 && (
+                                    (from_id >= 0 && from_id <= 3 && my_id >= 4 && my_id <= 6)
+                                    || (from_id >= 4 && from_id <= 6 && my_id >= 0 && my_id <= 3)
+                                ) {
+                                    let delayed_header = DelayHeader {
+                                        header,
+                                        process_at: Instant::now() + Duration::from_millis(self.unstable_delay),
+                                    };           
+                                    delayed_headers.push_back(delayed_header);
+                                    Ok(())
+                                } else {
+                                    match self.sanitize_header(&header) {
+                                        Ok(()) => self.process_header(&header).await,
+                                        error => error
+                                    }
+                                }
                             } else {
                                 match self.sanitize_header(&header) {
                                     Ok(()) => self.process_header(&header).await,
@@ -405,9 +421,32 @@ impl Core {
                             }
                         },
                         PrimaryMessage::Vote(vote) => {
-                            match self.sanitize_vote(&vote) {
-                                Ok(()) => self.process_vote(vote).await,
-                                error => error
+                            if let Some(start_time) = START_TIME.get() {
+                                let elapsed = start_time.elapsed().as_secs();
+                                let cycle_position = elapsed % 90;
+                                let from_id = self.get_idx(&vote.author);
+                                let my_id = self.get_idx(&self.name);
+                                if cycle_position >= 60 && (
+                                    (from_id >= 0 && from_id <= 3 && my_id >= 4 && my_id <= 6)
+                                    || (from_id >= 4 && from_id <= 6 && my_id >= 0 && my_id <= 3)
+                                ) {
+                                    let delayed_vote = DelayVote {
+                                        vote,
+                                        process_at: Instant::now() + Duration::from_millis(self.unstable_delay),
+                                    };
+                                    delayed_votes.push_back(delayed_vote);
+                                    Ok(())
+                                } else {
+                                    match self.sanitize_vote(&vote) {
+                                        Ok(()) => self.process_vote(vote).await,
+                                        error => error
+                                    }
+                                }
+                            } else {
+                                match self.sanitize_vote(&vote) {
+                                    Ok(()) => self.process_vote(vote).await,
+                                    error => error
+                                }
                             }
                         },
                         PrimaryMessage::Certificate(certificate) => {
@@ -444,6 +483,7 @@ impl Core {
             }
 
             let _ = self.process_delayed_headers(&mut delayed_headers).await;
+            let _ = self.process_delayed_votes(&mut delayed_votes).await;
 
             // Cleanup internal state.
             let round = self.consensus_round.load(Ordering::Relaxed);
@@ -484,6 +524,33 @@ impl Core {
             result?;
         }
         
+        Ok(())
+    }
+
+    async fn process_delayed_votes(&mut self, delayed_votes: &mut VecDeque<DelayVote>) -> Result<(), DagError> {
+        let now = Instant::now();
+        let mut results = Vec::new();
+
+        // Process all votes that are ready
+        while let Some(delayed_vote) = delayed_votes.front() {
+            debug!("now: {:?}", now);
+            if delayed_vote.process_at <= now {
+                let delayed_vote = delayed_votes.pop_front().unwrap();
+                let result = match self.sanitize_vote(&delayed_vote.vote) {
+                    Ok(()) => self.process_vote(delayed_vote.vote).await,
+                    error => error
+                };
+                results.push(result);
+            } else {
+                break; // Votes are ordered by time, so we can stop here
+            }
+        }
+
+        // Return the first error if any, otherwise Ok
+        for result in results {
+            result?;
+        }
+
         Ok(())
     }
 }

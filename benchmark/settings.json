@@ -7,7 +7,7 @@
     "repo": {
         "name": "my-narwhal-1",
         "url": "https://github.com/DGJGzy/my-narwhal-1",
-        "branch": "ec2"
+        "branch": "ec2-1"
     },
     "instances": {
         "type": "m5d.xlarge",
